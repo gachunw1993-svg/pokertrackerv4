@@ -103,7 +103,7 @@ function History({ records, setRecords }) {
 }
 
 function Graphs({ records }) {
-  const [typeFilter, setTypeFilter] = useState("All"), [xAxis, setXAxis] = useState("Sessions"), [yAxis, setYAxis] = useState("Profit/Loss"), [chartType, setChartType] = useState("Line");
+  const [typeFilter, setTypeFilter] = useState("All"), [xAxis, setXAxis] = useState("Sessions"), [yAxis, setYAxis] = useState("Accumulated P/L"), [chartType, setChartType] = useState("Line");
   const filtered = records.filter((r) => typeFilter === "All" || r.gameType === typeFilter).sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.id - b.id);
   const chartData = useMemo(() => {
     let runningPL = 0, runningHours = 0;
