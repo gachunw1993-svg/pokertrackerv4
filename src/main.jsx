@@ -55,6 +55,21 @@ function duration(record) {
   const m = mins % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
+function inclusiveTrackingDays(records) {
+  if (!records.length) return 0;
+  const sortedDates = records.map((r) => String(r.date)).filter(Boolean).sort();
+  if (!sortedDates.length) return 0;
+  const [sy, sm, sd] = sortedDates[0].split("-").map(Number);
+  const [ey, em, ed] = sortedDates[sortedDates.length - 1].split("-").map(Number);
+  const start = new Date(sy, sm - 1, sd);
+  const end = new Date(ey, em - 1, ed);
+  return Math.max(1, Math.round((end - start) / 86400000) + 1);
+}
+function hoursText(hours) {
+  const h = Math.floor(hours);
+  const m = Math.round((hours - h) * 60);
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
 function Card({ children, className = "" }) { return <div className={`card ${className}`}>{children}</div>; }
 function Stat({ icon: Icon, label, value, trend }) { return <Card className="statCard"><div className="statIcon"><Icon size={19} /></div><div><p className="tiny muted">{label}</p><p className={`statValue ${trend || ""}`}>{value}</p></div></Card>; }
 function Input({ label, ...props }) { return <label className="field"><span>{label}</span><input {...props} /></label>; }
@@ -118,13 +133,14 @@ function Graphs({ records }) {
       const grouped = {};
       filtered.forEach((r) => {
         const key = xAxis === "Days" ? r.date : monthKey(r.date);
-        if (!grouped[key]) grouped[key] = { key, label: xAxis === "Days" ? prettyDate(key) : monthLabel(key), buyIn: 0, cashOut: 0, profitLoss: 0, accumulatedPL: 0, roi: 0, hoursPlayed: 0, sessions: 0, bullets: 0, avgBuyIn: 0, accumulatedSessions: 0, accumulatedCashes: 0 };
+        if (!grouped[key]) grouped[key] = { key, label: xAxis === "Days" ? prettyDate(key) : monthLabel(key), buyIn: 0, cashOut: 0, profitLoss: 0, accumulatedPL: 0, roi: 0, hoursPlayed: 0, sessions: 0, bullets: 0, avgBuyIn: 0, accumulatedCashes: 0, trackedDates: new Set() };
         grouped[key].buyIn += calcCashIn(r);
         grouped[key].cashOut += Number(r.cashOut || 0);
         grouped[key].profitLoss += calcPL(r);
         grouped[key].hoursPlayed += durationHours(r);
         grouped[key].sessions += 1;
         grouped[key].bullets += Number(r.bullets || 0);
+        grouped[key].trackedDates.add(String(r.date));
         if (Number(r.cashOut || 0) > calcCashIn(r)) grouped[key].cashCount = (grouped[key].cashCount || 0) + 1;
       });
       return Object.values(grouped).sort((a, b) => a.key.localeCompare(b.key)).map((row) => {
@@ -139,8 +155,8 @@ function Graphs({ records }) {
           accumulatedPL: runningPL,
           roi: runningBuyIn > 0 ? (runningPL / runningBuyIn) * 100 : 0,
           hoursPlayed: Number(runningHours.toFixed(2)),
-          avgBuyIn: row.sessions > 0 ? row.buyIn / row.sessions : 0,
-          accumulatedSessions: runningSessions,
+          avgBuyIn: row.trackedDates?.size ? row.buyIn / row.trackedDates.size : row.buyIn,
+
           bullets: row.bullets,
           accumulatedBullets: runningBullets,
           accumulatedCashes: runningCashes,
@@ -170,27 +186,29 @@ function Graphs({ records }) {
         sessions: 1,
         bullets: Number(r.bullets || 0),
         accumulatedBullets: runningBullets,
-        avgBuyIn: runningSessions > 0 ? runningBuyIn / runningSessions : 0,
-        accumulatedSessions: runningSessions,
+        avgBuyIn: cashIn,
+
         accumulatedCashes: runningCashes,
       };
     });
   }, [filtered, xAxis]);
 
-  const metricKey = yAxis === "Buy-In" ? "buyIn" : yAxis === "Cash-Out" ? "cashOut" : yAxis === "Accumulated P/L" ? "accumulatedPL" : yAxis === "ROI %" ? "roi" : yAxis === "Average Buy-In" ? "avgBuyIn" : yAxis === "Accumulated Sessions" ? "accumulatedSessions" : yAxis === "Entries/Bullets" ? "bullets" : yAxis === "Accumulated Bullets" ? "accumulatedBullets" : yAxis === "Accumulated Cashes" ? "accumulatedCashes" : "profitLoss";
+  const metricKey = yAxis === "Accumulated Cashes" ? "accumulatedCashes" : yAxis === "Accumulated Entries" ? "accumulatedBullets" : yAxis === "Accumulated P/L" ? "accumulatedPL" : yAxis === "Average Buy-In" ? "avgBuyIn" : yAxis === "Buy-In" ? "buyIn" : yAxis === "Cash-Out" ? "cashOut" : yAxis === "Entries" ? "bullets" : yAxis === "Profit/Loss" ? "profitLoss" : yAxis === "ROI %" ? "roi" : "accumulatedPL";
   const totalPL = filtered.reduce((s, r) => s + calcPL(r), 0), totalBuyIn = filtered.reduce((s, r) => s + calcCashIn(r), 0), totalCashOut = filtered.reduce((s, r) => s + Number(r.cashOut || 0), 0), roi = totalBuyIn > 0 ? (totalPL / totalBuyIn) * 100 : 0;
   const totalHours = filtered.reduce((s, r) => s + durationHours(r), 0), totalBullets = filtered.reduce((s, r) => s + Number(r.bullets || 0), 0), totalCashes = filtered.filter((r) => Number(r.cashOut || 0) > calcCashIn(r)).length;
   const tourneyRecords = filtered.filter((r) => r.gameType === "Tournament"), cashRecords = filtered.filter((r) => r.gameType === "Cash");
   const avgTourneyBuyIn = tourneyRecords.length ? tourneyRecords.reduce((s, r) => s + calcCashIn(r), 0) / tourneyRecords.length : 0;
-  const avgCashOut = filtered.length ? totalCashOut / filtered.length : 0;
+  const avgTourneyCashOut = tourneyRecords.length ? tourneyRecords.reduce((s, r) => s + Number(r.cashOut || 0), 0) / tourneyRecords.length : 0;
+  const avgTourneyEntries = tourneyRecords.length ? tourneyRecords.reduce((s, r) => s + Number(r.bullets || 0), 0) / tourneyRecords.length : 0;
   const avgSessionHours = filtered.length ? totalHours / filtered.length : 0;
-  const timeText = `${Math.floor(totalHours / 24)}d ${Math.floor(totalHours % 24)}h ${Math.round((totalHours % 1) * 60)}m`;
+  const trackingDays = inclusiveTrackingDays(filtered);
+  const totalHoursText = hoursText(totalHours);
   const chartValueIsMoney = ["buyIn", "cashOut", "profitLoss", "accumulatedPL", "avgBuyIn"].includes(metricKey);
 
   return <section className="page"><div className="sectionHeader"><div><p className="eyebrow">Performance view</p><h1>Graphs</h1></div><Flame className="flame" size={29} /></div>
     <div className="quickStats"><Stat icon={TrendingUp} label="Total P/L" value={money(totalPL)} trend={totalPL >= 0 ? "good" : "bad"} /><Stat icon={WalletCards} label="Total Buy-In" value={money(totalBuyIn)} /><Stat icon={CircleDollarSign} label="Cash-Out" value={money(totalCashOut)} /><Stat icon={Trophy} label="ROI %" value={`${roi.toFixed(1)}%`} trend={roi >= 0 ? "good" : "bad"} /></div>
-    <Card className="overviewCard"><div className="chartHeader"><div><h2>Tracker Overview</h2><p>Filtered summary for the selected date range and game type.</p></div></div><div className="overviewGrid"><div><span>Tourney Sessions</span><strong>{tourneyRecords.length}</strong></div><div><span>Cash Sessions</span><strong>{cashRecords.length}</strong></div><div><span>Total Sessions</span><strong>{filtered.length}</strong></div><div><span>Entries/Bullets</span><strong>{totalBullets}</strong></div><div><span>Cashes</span><strong>{totalCashes}</strong></div><div><span>Time Tracked</span><strong>{timeText}</strong></div><div><span>Avg Tourney Buy-In</span><strong>{money(avgTourneyBuyIn)}</strong></div><div><span>Avg Cash-Out</span><strong>{money(avgCashOut)}</strong></div><div><span>Avg Session Length</span><strong>{avgSessionHours.toFixed(1)}h</strong></div></div></Card>
-    <Card><div className="filterGrid"><Select label="Game Filter" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}><option value="All">Cash + Tourney</option><option value="Cash">Cash</option><option value="Tournament">Tourney</option></Select><Select label="X-Axis" value={xAxis} onChange={(e) => setXAxis(e.target.value)}><option>Sessions</option><option>Days</option><option>Months</option><option>Hours Played</option></Select><Select label="Y-Axis" value={yAxis} onChange={(e) => setYAxis(e.target.value)}><option>Accumulated P/L</option><option>Profit/Loss</option><option>ROI %</option><option>Average Buy-In</option><option>Buy-In</option><option>Cash-Out</option><option>Accumulated Sessions</option><option>Entries/Bullets</option><option>Accumulated Bullets</option><option>Accumulated Cashes</option></Select><Select label="Chart Type" value={chartType} onChange={(e) => setChartType(e.target.value)}><option>Line</option><option>Bar</option><option>Area</option></Select><Input label="Date From" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /><Input label="Date To" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></div><button type="button" className="smallButton dateClearButton" onClick={clearDateRange}>Clear Date Range</button></Card>
+    <Card className="overviewCard"><div className="chartHeader"><div><h2>Tracker Overview</h2><p>Filtered summary for the selected date range and game type.</p></div></div><div className="overviewGrid"><div><span>Tourney Sessions</span><strong>{tourneyRecords.length}</strong></div><div><span>Cash Sessions</span><strong>{cashRecords.length}</strong></div><div><span>Total Sessions</span><strong>{filtered.length}</strong></div><div><span>Total Entries</span><strong>{totalBullets}</strong></div><div><span>Avg Tournament Entries</span><strong>{avgTourneyEntries.toFixed(2)}</strong></div><div><span>Cashes</span><strong>{totalCashes}</strong></div><div><span>Days Tracked</span><strong>{trackingDays}</strong></div><div><span>Total Hours Played</span><strong>{totalHoursText}</strong></div><div><span>Avg Tourney Buy-In</span><strong>{money(avgTourneyBuyIn)}</strong></div><div><span>Tourney Avg Cash-Out</span><strong>{money(avgTourneyCashOut)}</strong></div><div><span>Avg Session Length</span><strong>{avgSessionHours.toFixed(1)}h</strong></div></div></Card>
+    <Card><div className="filterGrid"><Select label="Game Filter" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}><option value="All">Cash + Tourney</option><option value="Cash">Cash</option><option value="Tournament">Tourney</option></Select><Select label="X-Axis" value={xAxis} onChange={(e) => setXAxis(e.target.value)}><option>Sessions</option><option>Days</option><option>Months</option><option>Hours Played</option></Select><Select label="Y-Axis" value={yAxis} onChange={(e) => setYAxis(e.target.value)}><option>Accumulated Cashes</option><option>Accumulated Entries</option><option>Accumulated P/L</option><option>Average Buy-In</option><option>Buy-In</option><option>Cash-Out</option><option>Entries</option><option>Profit/Loss</option><option>ROI %</option></Select><Select label="Chart Type" value={chartType} onChange={(e) => setChartType(e.target.value)}><option>Line</option><option>Bar</option><option>Area</option></Select><Input label="Date From" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /><Input label="Date To" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></div><button type="button" className="smallButton dateClearButton" onClick={clearDateRange}>Clear Date Range</button></Card>
     <Card className="chartCard"><div className="chartHeader"><div><h2>{yAxis}</h2><p>{typeFilter === "All" ? "Cash + Tourney" : typeFilter} · by {xAxis.toLowerCase()} · {filtered.length} sessions</p></div></div><div className="bigChart"><ResponsiveContainer width="100%" height="100%">{chartType === "Bar" ? <BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" /><XAxis dataKey="label" stroke="#8EA0B8" fontSize={12} /><YAxis stroke="#8EA0B8" fontSize={12} tickFormatter={(v) => chartValueIsMoney ? `$${Number(v).toFixed(0)}` : Number(v).toFixed(0)} /><Tooltip content={<PokerTooltip metricKey={metricKey} />} /><Bar dataKey={metricKey} radius={[10, 10, 0, 0]} fill="#D6B35A" /></BarChart> : chartType === "Area" ? <AreaChart data={chartData}><defs><linearGradient id="goldArea" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#D6B35A" stopOpacity={0.75}/><stop offset="95%" stopColor="#D6B35A" stopOpacity={0.04}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" /><XAxis dataKey="label" stroke="#8EA0B8" fontSize={12} /><YAxis stroke="#8EA0B8" fontSize={12} tickFormatter={(v) => chartValueIsMoney ? `$${Number(v).toFixed(0)}` : Number(v).toFixed(0)} /><Tooltip content={<PokerTooltip metricKey={metricKey} />} /><Area type="monotone" dataKey={metricKey} stroke="#D6B35A" fill="url(#goldArea)" strokeWidth={3} /></AreaChart> : <LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" /><XAxis dataKey="label" stroke="#8EA0B8" fontSize={12} /><YAxis stroke="#8EA0B8" fontSize={12} tickFormatter={(v) => chartValueIsMoney ? `$${Number(v).toFixed(0)}` : Number(v).toFixed(0)} /><Tooltip content={<PokerTooltip metricKey={metricKey} />} /><Line type="monotone" dataKey={metricKey} stroke="#D6B35A" strokeWidth={3} dot={{ r: 4, fill: "#D6B35A" }} /></LineChart>}</ResponsiveContainer></div></Card></section>;
 }
 function PokerTooltip({ active, payload, label, metricKey }) {
@@ -199,7 +217,7 @@ function PokerTooltip({ active, payload, label, metricKey }) {
   const raw = Number(payload[0].value || 0);
   const moneyKeys = ["buyIn", "cashOut", "profitLoss", "accumulatedPL", "avgBuyIn"];
   const valueText = metricKey === "roi" ? `${raw.toFixed(1)}%` : moneyKeys.includes(metricKey) ? money(raw) : raw.toLocaleString(undefined, { maximumFractionDigits: 1 });
-  return <div className="tooltip"><p className="tooltipTitle">{label}</p>{item?.date && <p>{item.date} · {item.gameType}</p>}<p>{metricKey}: <strong>{valueText}</strong></p>{item?.hoursPlayed !== undefined && <p>Total hours: {item.hoursPlayed}h</p>}{item?.sessionHours !== undefined && <p>Session: {item.sessionHours}h</p>}{item?.sessions && <p>Sessions: {item.sessions}</p>}{item?.bullets !== undefined && <p>Bullets: {item.bullets}</p>}{item?.accumulatedCashes !== undefined && <p>Cashes: {item.accumulatedCashes}</p>}</div>;
+  return <div className="tooltip"><p className="tooltipTitle">{label}</p>{item?.date && <p>{item.date} · {item.gameType}</p>}<p>{metricKey}: <strong>{valueText}</strong></p>{item?.hoursPlayed !== undefined && <p>Total hours: {item.hoursPlayed}h</p>}{item?.sessionHours !== undefined && <p>Session: {item.sessionHours}h</p>}{item?.sessions && <p>Sessions: {item.sessions}</p>}{item?.bullets !== undefined && <p>Entries: {item.bullets}</p>}{item?.accumulatedCashes !== undefined && <p>Cashes: {item.accumulatedCashes}</p>}</div>;
 }
 function SettingsPage({ records, setRecords }) {
   function exportJSON() { const blob = new Blob([JSON.stringify(records, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "poker-tracker-records.json"; a.click(); URL.revokeObjectURL(url); }
